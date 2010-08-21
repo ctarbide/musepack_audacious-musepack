@@ -58,19 +58,10 @@ struct Widgets
 struct MpcDecoder
 {
     gchar*     isError;
+	unsigned   dynbitrate;
     long long  offset;
-    bool       isOutput;
     bool       isAlive;
     bool       isPause;
-};
-
-struct TrackInfo
-{
-    gint   bitrate;
-    gchar* display;
-    gint   length;
-    gint   sampleFreq;
-    gint   channels;
 };
 
 struct MpcInfo

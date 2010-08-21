@@ -47,7 +47,7 @@ using TagLib::APE::ItemListMap;
 static PluginConfig pluginConfig = {0};
 static Widgets      widgets      = {0};
 static MpcDecoder   mpcDecoder   = {0};
-static TrackInfo    track        = {0};
+static mpc_streaminfo	streamInfo	= {0};
 
 static GThread            *threadHandle;
 static GStaticMutex threadMutex = G_STATIC_MUTEX_INIT;
@@ -267,7 +267,7 @@ static void saveConfigBox(GtkWidget* p_Widget, gpointer p_Data)
     gtk_widget_destroy (widgets.configBox);
 }
 
-static gint mpcIsOurFD(gchar* p_Filename, VFSFile* file)
+static gint mpcIsOurFD(const gchar* p_Filename, VFSFile* file)
 {
     gchar magic[4];
     aud_vfs_fread(magic, 1, 4, file);
@@ -282,7 +282,6 @@ static void mpcPlay(InputPlayback *data)
 {
     mpcDecoder.offset   = -1;
     mpcDecoder.isAlive  = true;
-    mpcDecoder.isOutput = false;
     mpcDecoder.isPause  = false;
     threadHandle = g_thread_self();
     decodeStream(data);
@@ -291,16 +290,6 @@ static void mpcPlay(InputPlayback *data)
 static void mpcStop(InputPlayback *data)
 {
     mpcDecoder.isAlive = false;
-    if (threadHandle)
-    {
-        g_thread_join(threadHandle);
-        if (mpcDecoder.isOutput)
-        {
-            data->output->buffer_free();
-            data->output->close_audio();
-            mpcDecoder.isOutput = false;
-        }
-    }
 }
 
 inline static void lockAcquire()
@@ -423,7 +412,7 @@ static void freeTags(MpcInfo& tags)
     g_free(tags.date);
 }
 
-static Tuple *mpcGetTuple(gchar* p_Filename, VFSFile *input)
+static Tuple *mpcGetTuple(const gchar* p_Filename, VFSFile *input)
 {
 	Tuple *tuple = 0;
 	bool close_input = false;
@@ -450,26 +439,26 @@ static Tuple *mpcGetTuple(gchar* p_Filename, VFSFile *input)
 
 	aud_tuple_associate_int(tuple, FIELD_LENGTH, NULL, static_cast<int> (1000 * mpc_streaminfo_get_length(&info)));
 
-// 	gchar *scratch = g_strdup_printf("Musepack v%d (encoder %s)", info.stream_version, info.encoder);
-// 	aud_tuple_associate_string(tuple, FIELD_CODEC, NULL, scratch);
-// 	g_free(scratch);
+ 	gchar *scratch = g_strdup_printf("Musepack v%d (encoder %s)", info.stream_version, info.encoder);
+ 	aud_tuple_associate_string(tuple, FIELD_CODEC, NULL, scratch);
+ 	g_free(scratch);
 
-// 	scratch = g_strdup_printf("lossy (%s)", info.profile_name);
-// 	aud_tuple_associate_string(tuple, FIELD_QUALITY, NULL, scratch);
-// 	g_free(scratch);
+ 	scratch = g_strdup_printf("lossy (%s)", info.profile_name);
+ 	aud_tuple_associate_string(tuple, FIELD_QUALITY, NULL, scratch);
+ 	g_free(scratch);
 
 	aud_tuple_associate_int(tuple, FIELD_BITRATE, NULL, static_cast<int> (info.average_bitrate / 1000));
 
 	MpcInfo tags = getTags(p_Filename);
 
-// 	aud_tuple_associate_string(tuple, FIELD_DATE, NULL, tags.date);
-// 	aud_tuple_associate_string(tuple, FIELD_TITLE, NULL, tags.title);
-// 	aud_tuple_associate_string(tuple, FIELD_ARTIST, NULL, tags.artist);
-// 	aud_tuple_associate_string(tuple, FIELD_ALBUM, NULL, tags.album);
-// 	aud_tuple_associate_int(tuple, FIELD_TRACK_NUMBER, NULL, tags.track);
-// 	aud_tuple_associate_int(tuple, FIELD_YEAR, NULL, tags.year);
-// 	aud_tuple_associate_string(tuple, FIELD_GENRE, NULL, tags.genre);
-// 	aud_tuple_associate_string(tuple, FIELD_COMMENT, NULL, tags.comment);
+ 	aud_tuple_associate_string(tuple, FIELD_DATE, NULL, tags.date);
+ 	aud_tuple_associate_string(tuple, FIELD_TITLE, NULL, tags.title);
+ 	aud_tuple_associate_string(tuple, FIELD_ARTIST, NULL, tags.artist);
+ 	aud_tuple_associate_string(tuple, FIELD_ALBUM, NULL, tags.album);
+ 	aud_tuple_associate_int(tuple, FIELD_TRACK_NUMBER, NULL, tags.track);
+ 	aud_tuple_associate_int(tuple, FIELD_YEAR, NULL, tags.year);
+ 	aud_tuple_associate_string(tuple, FIELD_GENRE, NULL, tags.genre);
+ 	aud_tuple_associate_string(tuple, FIELD_COMMENT, NULL, tags.comment);
 
 	freeTags(tags);
 
@@ -479,24 +468,14 @@ static Tuple *mpcGetTuple(gchar* p_Filename, VFSFile *input)
 	return tuple;
 }
 
-static Tuple *mpcProbeForTuple(gchar* p_Filename, VFSFile *input)
+static Tuple *mpcProbeForTuple(const gchar* p_Filename, VFSFile *input)
 {
     return mpcGetTuple(p_Filename, input);
 }
 
-static Tuple *mpcGetSongTuple(gchar* p_Filename)
+static Tuple *mpcGetSongTuple(const gchar* p_Filename)
 {
 	return mpcGetTuple(p_Filename, 0);
-}
-
-static char* mpcGenerateTitle(const MpcInfo& p_Tags, gchar* p_Filename)
-{
-    Tuple* tuple = mpcGetSongTuple(p_Filename);
-
-    gchar* title = aud_tuple_formatter_make_title_string(tuple, aud_get_gentitle_format());
-
-    aud_tuple_free((void *) tuple);
-    return title;
 }
 
 static void mpcGtkPrintLabel(GtkWidget* widget, const char* format,...)
@@ -549,7 +528,7 @@ static GtkWidget* mpcGtkButton(const char* p_Text, GtkWidget* p_Box)
     return button;
 }
 
-static void mpcFileInfoBox(char* p_Filename)
+static void mpcFileInfoBox(const gchar* p_Filename)
 {
     GtkWidget* infoBox = widgets.infoBox;
 
@@ -736,9 +715,9 @@ static void closeInfoBox(GtkWidget* w, gpointer data)
 
 static void* endThread(gchar* p_FileName, VFSFile * p_FileHandle, bool release)
 {
-    if(release)
+    if (release)
         lockRelease();
-    if(mpcDecoder.isError)
+    if (mpcDecoder.isError)
     {
         perror(mpcDecoder.isError);
         g_free(mpcDecoder.isError);
@@ -747,11 +726,6 @@ static void* endThread(gchar* p_FileName, VFSFile * p_FileHandle, bool release)
     mpcDecoder.isAlive = false;
     if(p_FileHandle)
         aud_vfs_fclose(p_FileHandle);
-    if(track.display)
-    {
-        g_free(track.display);
-        track.display = NULL;
-    }
     return 0;
 }
 
@@ -765,14 +739,14 @@ static int processBuffer(InputPlayback *playback,
 
 	if (info.bits == -1) return -1; // end of stream
 
-	copyBuffer(sampleBuffer, xmmsBuffer, info.samples * track.channels);
+	copyBuffer(sampleBuffer, xmmsBuffer, info.samples * streamInfo.channels);
 
     if (pluginConfig.dynamicBitrate)
     {
-		track.bitrate = static_cast<int> (info.bits * track.sampleFreq / 1152);
+		mpcDecoder.dynbitrate = info.bits * streamInfo.sample_freq / 1152;
     }
 
-	playback->pass_audio(playback, FMT_S16_LE, track.channels, info.samples * 2 * track.channels, xmmsBuffer, NULL);
+	playback->output->write_audio(xmmsBuffer, info.samples * 2 * streamInfo.channels);
 	return info.samples;
 }
 
@@ -797,18 +771,11 @@ static void* decodeStream(InputPlayback *data)
 		return endThread(filename, input, true);
 	}
 
-    mpc_streaminfo info;
-	mpc_demux_get_info(demux, &info);
+	mpc_demux_get_info(demux, &streamInfo);
 
-    MpcInfo tags     = getTags(filename);
-    track.display    = mpcGenerateTitle(tags, filename);
-    track.length     = static_cast<int> (1000 * mpc_streaminfo_get_length(&info));
-    track.bitrate    = static_cast<int> (info.average_bitrate);
-    track.sampleFreq = info.sample_freq;
-    track.channels   = info.channels;
-    freeTags(tags);
-
-    data->set_params(data, track.display, track.length, track.bitrate, track.sampleFreq, track.channels);
+	data->set_tuple(data, mpcGetTuple(data->filename, input));
+	data->set_params(data, 0, 0, static_cast<int> (streamInfo.average_bitrate),
+					 streamInfo.sample_freq, streamInfo.channels);
 
 	mpc_set_replay_level(demux, MPC_OLD_GAIN_REF, pluginConfig.replaygain,
 						 pluginConfig.albumGain, pluginConfig.clipPrevention);
@@ -816,19 +783,18 @@ static void* decodeStream(InputPlayback *data)
     MPC_SAMPLE_FORMAT sampleBuffer[MPC_DECODER_BUFFER_LENGTH];
     char xmmsBuffer[MPC_DECODER_BUFFER_LENGTH * 4];
 
-    if (!data->output->open_audio(FMT_S16_LE, track.sampleFreq, track.channels))
+    if (!data->output->open_audio(FMT_S16_LE, streamInfo.sample_freq, streamInfo.channels))
     {
         mpcDecoder.isError = g_strdup_printf("[xmms-musepack] decodeStream is unable to open an audio output");
         return endThread(filename, input, true);
     }
 
-	mpcDecoder.isOutput = true;
     lockRelease();
 
 	data->set_pb_ready(data);
 	data->playing = TRUE;
 
-    gint counter = 2 * track.sampleFreq / 3;
+    gint counter = 2 * streamInfo.sample_freq / 3;
 	int status = 0;
     while (mpcDecoder.isAlive)
     {
@@ -836,37 +802,35 @@ static void* decodeStream(InputPlayback *data)
 
 		if (mpcDecoder.offset != -1)
         {
-			mpc_demux_seek_sample(demux, mpcDecoder.offset * track.sampleFreq / 1000);
+			mpc_demux_seek_sample(demux, mpcDecoder.offset * streamInfo.sample_freq / 1000);
 			data->output->flush(mpcDecoder.offset);
             mpcDecoder.offset = -1;
         }
+		lockRelease();
 
-        short iPlaying = data->output->buffer_playing()? 1 : 0;
-        gint iFree = data->output->buffer_free();
-        if (!mpcDecoder.isPause && iFree >= ((1152 * 4) << iPlaying) && status != -1)
+        if (mpcDecoder.isPause == FALSE && status != -1)
         {
             status = processBuffer(data, sampleBuffer, xmmsBuffer, demux);
-            lockRelease();
 
             if(pluginConfig.dynamicBitrate)
             {
                 counter -= status;
                 if(counter < 0)
                 {
-                    data->set_params(data, track.display, track.length, track.bitrate, track.sampleFreq, track.channels);
-                    counter = 2 * track.sampleFreq / 3;
+					data->set_params(data, 0, 0, mpcDecoder.dynbitrate, streamInfo.sample_freq, streamInfo.channels);
+                    counter = 2 * streamInfo.sample_freq / 3;
                 }
             }
         }
         else
         {
-            lockRelease();
 			if (mpcDecoder.isPause == FALSE && status == -1 &&
 						 data->output->buffer_playing() == FALSE)
 				break;
             g_usleep(60000);
         }
     }
+	data->output->close_audio();
 	mpc_demux_exit(demux);
     return endThread(filename, input, false);
 }
@@ -881,35 +845,26 @@ InputPlugin MpcPlugin = {
 	0, // cleanup
     mpcAboutBox, // about : Show About box
     mpcConfigBox, // configure : Show Configure box
-    TRUE, // enabled
+    0, // PluginPreferences *settings
+
+    0, // gboolean have_subtune : Plugin supports/uses subtunes.
+    (gchar **)mpc_fmts, // vfs_extensions
+    0, // GList *(*scan_dir) (gchar * dirname);
 	0, // is_our_file
-	0, // scan_dir
+    mpcIsOurFD, // is_our_file_from_vfs
+	mpcProbeForTuple, // Tuple *(*probe_for_tuple)(gchar *uri, VFSFile *fd);
     mpcPlay, // play_file
     mpcStop, // stop
     mpcPause, // pause
     mpcSeek, // seek
+	mpcSeekm, // void (*mseek) (InputPlayback * playback, gulong millisecond);
 	0, // get_time
 	0, // get_volume
 	0, // set_volume
-	0, // get_vis_type
-	0, // add_vis_pcm
-	0, // set_info
-	0, // set_info_text
-	0, // get_song_info : Get Title String callback
-    mpcFileInfoBox, // file_info_box : Show File Info Box
+	mpcFileInfoBox, // file_info_box : Show File Info Box
     mpcGetSongTuple, // get_song_tuple : Acquire tuple for song
-    mpcIsOurFD, // is_our_file_from_vfs
-    (gchar **)mpc_fmts, // vfs_extensions
-
-    /* Added in Audacious 1.4.0 */
-	mpcSeekm, // void (*mseek) (InputPlayback * playback, gulong millisecond);
-	mpcProbeForTuple, // Tuple *(*probe_for_tuple)(gchar *uri, VFSFile *fd);
-
-    /* Added in Audacious 1.4.1 */
-//     gboolean have_subtune;
-
-    /* Added in Audacious 1.5.0 */
-//     gboolean (*update_song_tuple)(Tuple *tuple, VFSFile *fd);
+    0, //     gboolean (*update_song_tuple)(Tuple *tuple, VFSFile *fd);
+    0 //gint priority; /* 0 = first, 10 = last */
 };
 
 InputPlugin *mpc_iplist[] = { &MpcPlugin, NULL };

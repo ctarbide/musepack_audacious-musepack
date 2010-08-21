@@ -23,7 +23,7 @@ FIND_PATH(MOWGLI_INCLUDE_DIR mowgli.h
 	/usr/include/libmowgli
 )
 
-FIND_PATH(AUD_INPUT_PLUGIN_DIR Input
+FIND_PATH(AUD_PLUGIN_DIR Input
 	/usr/local/lib/audacious
 	/usr/lib/audacious
 )
@@ -40,4 +40,4 @@ add_library(musepack MODULE libmpc)
 target_link_libraries(musepack pthread mpcdec glib-2.0 tag gtk-x11-2.0)
 SET_TARGET_PROPERTIES(musepack PROPERTIES PREFIX "")
 
-install(TARGETS musepack LIBRARY DESTINATION "${AUD_INPUT_PLUGIN_DIR}/Input/")
+install(TARGETS musepack LIBRARY DESTINATION "${AUD_PLUGIN_DIR}/Input/")
