@@ -4,9 +4,12 @@
 //xmms headers
 extern "C"
 {
+#include <audacious/configdb.h>
 #include <audacious/plugin.h>
-#include <audacious/output.h>
 #include <audacious/i18n.h>
+#include <audacious/debug.h>
+#include <libaudgui/libaudgui.h>
+#include <libaudgui/libaudgui-gtk.h>
 }
 
 //stdlib headers

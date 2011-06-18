@@ -61,7 +61,7 @@ aud_vfs_fread_impl(mpc_reader *d, void *ptr, mpc_int32_t size)
 {
     VFSFile *file = (VFSFile *) d->data;
 
-    return (mpc_int32_t) aud_vfs_fread(ptr, 1, size, file);
+    return (mpc_int32_t) vfs_fread(ptr, 1, size, file);
 }
 
 static mpc_bool_t
@@ -69,7 +69,7 @@ aud_vfs_fseek_impl(mpc_reader *d, mpc_int32_t offset)
 {
     VFSFile *file = (VFSFile *) d->data;
 
-	return d->canseek(d) ? aud_vfs_fseek(file, offset, SEEK_SET) == 0 : FALSE;
+	return d->canseek(d) ? vfs_fseek(file, offset, SEEK_SET) == 0 : FALSE;
 }
 
 static mpc_int32_t
@@ -77,7 +77,7 @@ aud_vfs_ftell_impl(mpc_reader *d)
 {
     VFSFile *file = (VFSFile *) d->data;
 
-    return aud_vfs_ftell(file);
+    return vfs_ftell(file);
 }
 
 static mpc_int32_t
@@ -86,10 +86,14 @@ aud_vfs_getsize_impl(mpc_reader *d)
 	int f_pos, f_size;
 	VFSFile *file = (VFSFile *) d->data;
 
-	f_pos = aud_vfs_ftell(file);
-	aud_vfs_fseek(file, 0, SEEK_END);
-	f_size = aud_vfs_ftell(file);
-	aud_vfs_fseek(file, f_pos, SEEK_SET);
+	f_pos = vfs_ftell(file);
+	if (vfs_fseek(file, 0, SEEK_END) != 0) {
+        AUDDBG("Could not seek to the end of file\n");
+		return 0;
+	}
+	f_size = vfs_ftell(file);
+	if (vfs_fseek(file, f_pos, SEEK_SET) != 0)
+        AUDDBG("Could not seek to %d\n", f_pos);
 
 	return f_size;
 }
@@ -114,7 +118,8 @@ mpc_reader_setup_file_vfs(mpc_reader *p_reader, VFSFile *input)
     p_reader->get_size = aud_vfs_getsize_impl;
     p_reader->canseek = aud_vfs_canseek_impl;
 	p_reader->data = input; // no worries, it gets cast back -nenolod
-	aud_vfs_fseek(input, 0, SEEK_SET);
+	if (vfs_fseek(input, 0, SEEK_SET) != 0)
+        AUDDBG("Could not seek to the beginning of file\n");
 }
 
 static void mpcOpenPlugin()
@@ -137,8 +142,7 @@ static void mpcAboutBox()
     {
         char* titleText      = g_strdup_printf(_("Musepack Decoder Plugin %s"), VERSION);
         const char* contentText = _("Plugin code by\nBenoit Amiaux\nMartin Spuler\nKuniklo\nNicolas Botti\n\nGet latest version at http://musepack.net\n");
-        const char* buttonText  = _("Nevermind");
-        aboutBox = audacious_info_dialog(titleText, contentText, buttonText, FALSE, NULL, NULL);
+		audgui_simple_message (& aboutBox, GTK_MESSAGE_INFO, titleText, contentText);
         widgets.aboutBox = aboutBox;
         g_signal_connect(G_OBJECT(aboutBox), "destroy", G_CALLBACK(gtk_widget_destroyed), &widgets.aboutBox);
     }
@@ -270,7 +274,8 @@ static void saveConfigBox(GtkWidget* p_Widget, gpointer p_Data)
 static gint mpcIsOurFD(const gchar* p_Filename, VFSFile* file)
 {
     gchar magic[4];
-    aud_vfs_fread(magic, 1, 4, file);
+    if (4 != vfs_fread(magic, 1, 4, file))
+		return 0;
     if (memcmp(magic, "MP+", 3) == 0)
         return 1;
 	if (memcmp(magic, "MPCK", 4) == 0)
@@ -418,7 +423,7 @@ static Tuple *mpcGetTuple(const gchar* p_Filename, VFSFile *input)
 	bool close_input = false;
 
 	if (input == 0) {
-		input = aud_vfs_fopen(p_Filename, "rb");
+		input = vfs_fopen(p_Filename, "rb");
 		if (input == 0) {
 			gchar* temp = g_strdup_printf("[xmms-musepack] mpcGetTuple is unable to open %s\n", p_Filename);
 			perror(temp);
@@ -428,7 +433,7 @@ static Tuple *mpcGetTuple(const gchar* p_Filename, VFSFile *input)
 		close_input = true;
 	}
 
-	tuple = aud_tuple_new_from_filename(p_Filename);
+	tuple = tuple_new_from_filename(p_Filename);
 
 	mpc_streaminfo info;
 	mpc_reader reader;
@@ -437,33 +442,33 @@ static Tuple *mpcGetTuple(const gchar* p_Filename, VFSFile *input)
 	mpc_demux_get_info(demux, &info);
 	mpc_demux_exit(demux);
 
-	aud_tuple_associate_int(tuple, FIELD_LENGTH, NULL, static_cast<int> (1000 * mpc_streaminfo_get_length(&info)));
+	tuple_associate_int(tuple, FIELD_LENGTH, NULL, static_cast<int> (1000 * mpc_streaminfo_get_length(&info)));
 
  	gchar *scratch = g_strdup_printf("Musepack v%d (encoder %s)", info.stream_version, info.encoder);
- 	aud_tuple_associate_string(tuple, FIELD_CODEC, NULL, scratch);
+ 	tuple_associate_string(tuple, FIELD_CODEC, NULL, scratch);
  	g_free(scratch);
 
  	scratch = g_strdup_printf("lossy (%s)", info.profile_name);
- 	aud_tuple_associate_string(tuple, FIELD_QUALITY, NULL, scratch);
+ 	tuple_associate_string(tuple, FIELD_QUALITY, NULL, scratch);
  	g_free(scratch);
 
-	aud_tuple_associate_int(tuple, FIELD_BITRATE, NULL, static_cast<int> (info.average_bitrate / 1000));
+	tuple_associate_int(tuple, FIELD_BITRATE, NULL, static_cast<int> (info.average_bitrate / 1000));
 
 	MpcInfo tags = getTags(p_Filename);
 
- 	aud_tuple_associate_string(tuple, FIELD_DATE, NULL, tags.date);
- 	aud_tuple_associate_string(tuple, FIELD_TITLE, NULL, tags.title);
- 	aud_tuple_associate_string(tuple, FIELD_ARTIST, NULL, tags.artist);
- 	aud_tuple_associate_string(tuple, FIELD_ALBUM, NULL, tags.album);
- 	aud_tuple_associate_int(tuple, FIELD_TRACK_NUMBER, NULL, tags.track);
- 	aud_tuple_associate_int(tuple, FIELD_YEAR, NULL, tags.year);
- 	aud_tuple_associate_string(tuple, FIELD_GENRE, NULL, tags.genre);
- 	aud_tuple_associate_string(tuple, FIELD_COMMENT, NULL, tags.comment);
+ 	tuple_associate_string(tuple, FIELD_DATE, NULL, tags.date);
+ 	tuple_associate_string(tuple, FIELD_TITLE, NULL, tags.title);
+ 	tuple_associate_string(tuple, FIELD_ARTIST, NULL, tags.artist);
+ 	tuple_associate_string(tuple, FIELD_ALBUM, NULL, tags.album);
+ 	tuple_associate_int(tuple, FIELD_TRACK_NUMBER, NULL, tags.track);
+ 	tuple_associate_int(tuple, FIELD_YEAR, NULL, tags.year);
+ 	tuple_associate_string(tuple, FIELD_GENRE, NULL, tags.genre);
+ 	tuple_associate_string(tuple, FIELD_COMMENT, NULL, tags.comment);
 
 	freeTags(tags);
 
 	if (close_input)
-		aud_vfs_fclose(input);
+		vfs_fclose(input);
 
 	return tuple;
 }
@@ -643,7 +648,7 @@ static void mpcFileInfoBox(const gchar* p_Filename)
         GtkWidget* albumPeakLabel = mpcGtkLabel(infoVbox);
         GtkWidget* albumGainLabel = mpcGtkLabel(infoVbox);
 
-        VFSFile *input = aud_vfs_fopen(p_Filename, "rb");
+        VFSFile *input = vfs_fopen(p_Filename, "rb");
         if(input)
         {
             mpc_streaminfo info;
@@ -688,7 +693,7 @@ static void mpcFileInfoBox(const gchar* p_Filename)
             gtk_entry_set_text(GTK_ENTRY(fileEntry), entry);
             g_free(entry);
             freeTags(tags);
-            aud_vfs_fclose(input);
+            vfs_fclose(input);
         }
         else
         {
@@ -725,7 +730,7 @@ static void* endThread(gchar* p_FileName, VFSFile * p_FileHandle, bool release)
     }
     mpcDecoder.isAlive = false;
     if(p_FileHandle)
-        aud_vfs_fclose(p_FileHandle);
+        vfs_fclose(p_FileHandle);
     return 0;
 }
 
@@ -754,7 +759,7 @@ static void* decodeStream(InputPlayback *data)
 {
     lockAcquire();
     gchar* filename = data->filename;
-    VFSFile *input = aud_vfs_fopen(filename, "rb");
+    VFSFile *input = vfs_fopen(filename, "rb");
     if (!input)
     {
         mpcDecoder.isError = g_strdup_printf("[xmms-musepack] decodeStream is unable to open %s", filename);
@@ -846,25 +851,29 @@ InputPlugin MpcPlugin = {
     mpcAboutBox, // about : Show About box
     mpcConfigBox, // configure : Show Configure box
     0, // PluginPreferences *settings
+	0, // sendmsg
 
     0, // gboolean have_subtune : Plugin supports/uses subtunes.
     (gchar **)mpc_fmts, // vfs_extensions
-    0, // GList *(*scan_dir) (gchar * dirname);
-	0, // is_our_file
+    0, // priority
     mpcIsOurFD, // is_our_file_from_vfs
+    mpcGetSongTuple, // get_song_tuple : Acquire tuple for song
 	mpcProbeForTuple, // Tuple *(*probe_for_tuple)(gchar *uri, VFSFile *fd);
-    mpcPlay, // play_file
-    mpcStop, // stop
+    0, //     gboolean (*update_song_tuple)(Tuple *tuple, VFSFile *fd);
+	mpcFileInfoBox, // file_info_box : Show File Info Box
+	0, // get_song_image
+	0, // play
     mpcPause, // pause
-    mpcSeek, // seek
 	mpcSeekm, // void (*mseek) (InputPlayback * playback, gulong millisecond);
+    mpcStop, // stop
 	0, // get_time
 	0, // get_volume
 	0, // set_volume
-	mpcFileInfoBox, // file_info_box : Show File Info Box
-    mpcGetSongTuple, // get_song_tuple : Acquire tuple for song
-    0, //     gboolean (*update_song_tuple)(Tuple *tuple, VFSFile *fd);
-    0 //gint priority; /* 0 = first, 10 = last */
+	
+	/* Deprecated */
+	0, // is_our_file
+    mpcPlay, // play_file
+    mpcSeek, // seek
 };
 
 InputPlugin *mpc_iplist[] = { &MpcPlugin, NULL };
